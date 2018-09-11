@@ -3,3 +3,4 @@ data
 *.txt
 *.npy
 *.zip
+.ipynb_checkpoints
