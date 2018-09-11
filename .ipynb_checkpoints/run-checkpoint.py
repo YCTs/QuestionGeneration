@@ -14,6 +14,10 @@ parser.add_argument("-e","--embedding",
 					help="prepare the weight of word embedding",
 					action="store_true",
 					)
+parser.add_argument("--testing",
+					help="testing mode",
+					action="store_true",
+					)
 
 args = parser.parse_args()
 
@@ -24,13 +28,13 @@ class EncoderRNN(nn.Module):
 
         self.embedding = nn.Embedding.from_pretrained(embedding_weight)
         self.embedding_dim = embedding_weight.size(1)
-        self.gru = nn.GRU(self.embedding_dim, hidden_size, batch_first=True)
+        self.bi_gru = nn.GRU(self.embedding_dim, hidden_size, batch_first=True, bidirectional=True)
 
     def forward(self, input, hidden):
         embedded = self.embedding(input).view(-1, 1, self.embedding_dim) # 
         
         output = embedded
-        output, hidden = self.gru(output, hidden) ##hidden(len, batch, dim), output(batch, len, dim)
+        output, hidden = self.bi_gru(output, hidden) ##hidden(1*num_dir, batch, h_dim), output(batch, 1, num_dir*h_dim)
 
         return output, hidden
         
@@ -83,16 +87,23 @@ class AttnDecoderRNN(nn.Module):
         print(output.size())
 
         return output, hidden
-        '''
-        return output, hidden, attn_weights
-        '''
 
+        
+        
 
+    
+    
 
 
 
 def main():
 
+    if args.testing:
+        context, question, answer = train_data()
+        id_sentence(context)
+        exit(0)
+    
+    
     if args.embedding:
         embedding_weight()
         exit(0)
@@ -102,22 +113,21 @@ def main():
 
 
     encoder = EncoderRNN(50, weight).cuda()
-    #x = torch.LongTensor([[1, 2], [1, 2], [1, 2]], device=device).cuda()
+
     x = torch.tensor([[1, 2], [1, 2], [1, 2]], dtype=torch.long, device=device)
     
     seq_len = x.size(1)
     batch_size=3
     hidden = None
-    encoder_outputs=torch.zeros(batch_size, seq_len, encoder.hidden_size, device=device)
+    encoder_outputs=torch.zeros(batch_size, seq_len, 2*encoder.hidden_size, device=device)
 
     for time in range(seq_len):
         x_in = x[:, time]
         o, hidden = encoder.forward(x_in, hidden)
-        #print(o.size(), hidden.size())
-        #print(encoder_outputs.size())
+        print(o.size(), hidden.size())
         encoder_outputs[:, time, :] = o[:,0,:]
-    #print(encoder_outputs.size())
 
+    '''
 
     max_length = seq_len
     decoder_dict_size = 5
@@ -127,7 +137,7 @@ def main():
         x_in = x[: ,time]
         o_decoder, h_decoder = decoder.forward(x_in, hidden_decoder, encoder_outputs)
 
-
+    '''
 
 if __name__ == '__main__':
     main()

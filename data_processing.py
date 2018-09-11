@@ -61,3 +61,27 @@ def embedding_weight():
 	np.save('weight.npy', weight)
 	np.save('word2id.npy', word2id)
 	np.save('id2word.npy', id2word)
+
+
+def id_sentence(sentences):
+
+    ids = []
+    
+    word2id = np.load("word2id.npy").item()
+    
+    for i, sentence in enumerate(sentences):
+        ids.append([])
+        for j, word in enumerate(sentence):
+            if word in word2id:
+                ids[i].append(word2id[word])
+            else:
+                ids[i].append(word2id["UNK"])
+        
+
+        if i == 1:
+            print(sentence)
+            print(ids[i])
+    
+    
+    
+    
