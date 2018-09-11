@@ -139,5 +139,40 @@ def id_sentence(sentences, max_len):
     
     return ids
     
+def shortlist():
     
+    context, question, answer, answer_pointer = train_data()
     
+    count = {}
+
+    for i, sentence in enumerate(question):
+        for j , word in enumerate(sentence):
+            if word not in count:
+                count[word] = 0
+            else:
+                count[word] += 1
+                
+    x = sorted(count.items(), key = lambda item:item[1]) #(word, num)
+    
+    x_top2000 = x[-2000:]
+    
+    word2id = {}
+    word2id['PAD'] = 0
+    word2id['SOS'] = 1
+    word2id['EOS'] = 2
+    word2id['UNK'] = 3
+    id2word=['PAD', 'SOS', 'EOS', 'UNK']
+    
+    weight = np.zeros(2004, 100).astype(int32)
+    
+    word2id_encoder = np.load("word2id.npy").item()
+    weight_encoder = np.load("weight.npy")
+
+    i = 3
+    for word, item in x_top2000:
+        i+=1
+        word2id[word] = i
+        id2word.append(word)
+        
+        
+        i_encoder = word2id_encoder[word]
