@@ -21,20 +21,41 @@ parser.add_argument("--testing",
 
 args = parser.parse_args()
 
-class EncoderRNN(nn.Module):
+class EncoderRNN_Context(nn.Module):
     def __init__(self, hidden_size, embedding_weight):
-        super(EncoderRNN, self).__init__()
+        super(EncoderRNN_Context, self).__init__()
         self.hidden_size = hidden_size
 
         self.embedding = nn.Embedding.from_pretrained(embedding_weight)
         self.embedding_dim = embedding_weight.size(1)
+        
         self.bi_gru = nn.GRU(self.embedding_dim, hidden_size, batch_first=True, bidirectional=True)
 
     def forward(self, input, hidden):
         embedded = self.embedding(input).view(-1, 1, self.embedding_dim) # 
         
         output = embedded
-        output, hidden = self.bi_gru(output, hidden) ##hidden(1*num_dir, batch, h_dim), output(batch, 1, num_dir*h_dim)
+        output, hidden = self.bi_gru(output, hidden) ##hidden(1*num_dir, batch, h_dim), output(batch, 1, 2*h_dim)
+
+        return output, hidden
+
+class EncoderRNN_Answer(nn.Module):
+    def __init__(self, hidden_size, embedding_weight):
+        super(EncoderRNN_Answer, self).__init__()
+        self.hidden_size = hidden_size
+
+        self.embedding = nn.Embedding.from_pretrained(embedding_weight)
+        self.embedding_dim = embedding_weight.size(1)
+
+        self.bi_gru = nn.GRU(self.embedding_dim + 2*self.hidden_size, hidden_size, batch_first=True, bidirectional=True)
+
+    def forward(self, input, annotation_seq, hidden):
+        # annotaion_seq = (-1, 1, 2*hidden_size)
+        embedded = self.embedding(input).view(-1, 1, self.embedding_dim) # 
+        
+        output = torch.cat((embedded, annotation_seq.unsqueeze(1)), 2)
+        
+        output, hidden = self.bi_gru(output, hidden) ##hidden(1*num_dir, batch, h_dim), output(batch, 1, 2*h_dim)
 
         return output, hidden
         
@@ -99,8 +120,47 @@ class AttnDecoderRNN(nn.Module):
 def main():
 
     if args.testing:
-        context, question, answer = train_data()
-        id_sentence(context)
+
+        context, question, answer, answer_pointer = data_reduction() #100, 20, 20
+        
+        context = id_sentence(context, 100)
+        question = id_sentence(question, 20)
+        answer = id_sentence(answer, 20)
+        batch_size = 10
+        context_in = torch.tensor(context[0:batch_size], dtype=torch.long, device=device)
+        answer_in = torch.tensor(answer[0:batch_size], dtype=torch.long, device=device)
+        len_c = 100
+        len_q = 20
+        len_a = 20
+        
+        weight = np.load("weight.npy")
+
+        weight = torch.FloatTensor(weight)
+
+        encoder_context = EncoderRNN_Context(64, weight).cuda()
+        h_c = None
+        annotation_vector = torch.zeros(batch_size, len_c, 2*64, device=device)
+        for t_c in range(len_c):
+            input = context_in[:, t_c]
+            o, h_c = encoder_context.forward(input, h_c)
+            annotation_vector[:, t_c, :] = o[:, 0, :]
+            
+        encoder_answer = EncoderRNN_Answer(64, weight).cuda()
+        h_a = None
+        answer_encoding = None
+        annotation_seq = torch.zeros(batch_size, len_a, 2*64, device=device)
+        for j in range(batch_size):
+            actual_len =  answer_pointer[j][1] - answer_pointer[j][0] + 1
+            annotation_seq[j, 0:actual_len, :] = annotation_vector[j, answer_pointer[j][0]:answer_pointer[j][1]+1,:]
+        for t_a in range(len_a):
+            input = answer_in[:, t_a]
+        
+            answer_encoding, h_a = encoder_answer.forward(input, annotation_seq[:, t_a, :], h_a)
+            print(answer_encoding.size())
+
+    
+    
+        
         exit(0)
     
     
