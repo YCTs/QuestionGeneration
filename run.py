@@ -79,13 +79,13 @@ class AttnDecoderRNN(nn.Module):
         self.mlp = nn.Linear(3*self.hidden_size + self.embedding_dim, self.hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
         self.pointer_weight = nn.Parameter(torch.zeros((1), requires_grad=True))
-        
+        self.L = nn.Parameter(torch.zeros((self.hidden_size, self.hidden_size), requires_grad=True))
+        self.Wb_0 = nn.Linear(self.hidden_size, self.hidden_size)
 
     def forward(self, input, hidden, annot_vector, answer_encoding):
         embedded = self.embedding(input).view(-1, 1, self.embedding_dim) # -1, 1, embed_dim
         embedded = self.dropout(embedded)        
-          
-        
+                
         #print(embedded.size())         #-1, 1, embed_dim
         #print(annot_vector.size())     #-1, len_c, hidden_size
         #print(answer_encoding.size())  #-1, 1, hidden_size
@@ -110,16 +110,26 @@ class AttnDecoderRNN(nn.Module):
         e_t = self.mlp(input_mlp)
         o_t = F.softmax(self.out(e_t), dim=1) # -1, output_size
         z_t = torch.sigmoid(self.pointer_weight)
+        #print(z_t.item())
         p_t = torch.cat((o_t*z_t, attn_weights*(1-z_t)), 1)
-        #print(p_t.size())
-        #print(z_t)
+        p_t = torch.log(p_t+1e-20)
         return output, hidden, p_t
+    def inintHidden(self, h_a, h_d):
+
+        r = torch.bmm(h_a, self.L.unsqueeze(0)) + torch.sum(h_d.view(-1, h_d.size(1), h_d.size(2)))/h_d.size(1)
+        
+        return self.Wb_0(r.view(-1, 1, self.hidden_size)).view(1, -1, self.hidden_size)
+        
 
 teacher_forcing_ratio = 0.5
 
-def train(input_d, input_a, answer_pointer, target, encoder_d, encoder_a, decoder, len_d, len_a, len_q): #return loss
+def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d, encoder_a, decoder, encoder_d_optimizer, encoder_a_optimizer, decoder_optimizer,len_d, len_a, len_q): #return loss
     
     batch_size = 1
+    
+    encoder_d_optimizer.zero_grad()
+    encoder_a_optimizer.zero_grad()
+    decoder_optimizer.zero_grad()
     
     annotation_vector = torch.zeros(1, len_d, 2*64, device=device)
     len_d_actual = input_d.size(1)
@@ -140,7 +150,8 @@ def train(input_d, input_a, answer_pointer, target, encoder_d, encoder_a, decode
         input = input_a[:, t_a].view(1, 1)
         answer_encoding, h_a = encoder_a.forward(input, annotation_seq[:, t_a, :], h_a)
         
-    s = answer_encoding.view(1, -1, 128)
+    #s = answer_encoding.view(1, -1, 128)
+    s = decoder.inintHidden(answer_encoding, annotation_vector)
     SOS = [1]
     decoder_input = torch.tensor(SOS, dtype=torch.long, device=device).view(1, 1) # SOS token  
     loss = 0
@@ -154,6 +165,17 @@ def train(input_d, input_a, answer_pointer, target, encoder_d, encoder_a, decode
 
             o, s, p_t = decoder.forward(decoder_input,s,annotation_vector, answer_encoding)
             decoder_input = target[:, t_q].view(1, 1)
+            y_t = target[:, t_q].view(1,)
+            if y_t.item() == 3:
+                
+                word = q_words[t_q]
+                for j in range(len(d_words)):
+                    if word == d_words[j]:
+                        y_t = torch.tensor([j+2004], device=device)
+                        break
+            
+            loss+=nn.NLLLoss()(p_t, y_t)
+            
             
     else:
         len_q = target.size(1)
@@ -163,10 +185,15 @@ def train(input_d, input_a, answer_pointer, target, encoder_d, encoder_a, decode
             o, s, p_t = decoder.forward(decoder_input,s,annotation_vector, answer_encoding)
 
             decoder_input = target[:, t_q].view(1, 1)
+    
+    loss.backward()
+    encoder_d_optimizer.step()
+    encoder_a_optimizer.step()
+    decoder_optimizer.step()
+
             
             
-            
-    return 0
+    return loss.item()/len_q
 
 
 def main():
@@ -188,14 +215,21 @@ def main():
         encoder_a = EncoderRNN_Answer(64, weight).to(device)
         decoder = AttnDecoderRNN(128, weight_shortlist.size(0), weight_shortlist, 0.1, 20, 100).to(device)
         
-        d_in = torch.tensor(d[0], dtype=torch.long, device=device).view(1, -1) # batch, len_d
-        a_in = torch.tensor(a[0], dtype=torch.long, device=device).view(1, -1)
-        q_in = torch.tensor(q[0], dtype=torch.long, device=device).view(1, -1)
-        a_p = [answer_pointer[0]]        
-           
-        
-        loss = train(d_in, a_in, a_p, q_in, encoder_d, encoder_a, decoder, 100, 20, 20)
-        
+        encoder_d_optimizer = optim.Adam(encoder_d.parameters(), lr=0.0001)
+        encoder_a_optimizer = optim.Adam(encoder_a.parameters(), lr=0.0001)        
+        decoder_optimizer = optim.Adam(decoder.parameters(), lr=0.0001)
+
+        for i in range(1000):
+            d_in = torch.tensor(d[i], dtype=torch.long, device=device).view(1, -1) # batch, len_d
+            a_in = torch.tensor(a[i], dtype=torch.long, device=device).view(1, -1)
+            q_in = torch.tensor(q[i], dtype=torch.long, device=device).view(1, -1)
+            a_p = [answer_pointer[i]]        
+
+
+            loss = train(d_in, document[i], a_in, a_p, q_in, question[i], encoder_d, encoder_a, decoder,
+                         encoder_d_optimizer, encoder_a_optimizer, decoder_optimizer, 100, 20, 20)
+            if i%10 == 0:
+                print("i =", i, " ,loss=", loss)
         
         
         #print(d_in.size())
@@ -203,55 +237,7 @@ def main():
         
         #loss = train()
 
-    if args.testing:
-
-        context, question, answer, answer_pointer = data_reduction() #100, 20, 20
-        
-        context = id_sentence(context, 100)
-        question = id_sentence(question, 20, True)
-        answer = id_sentence(answer, 20)
-        batch_size = 1
-        context_in = torch.tensor(context[0:batch_size], dtype=torch.long, device=device)
-        answer_in = torch.tensor(answer[0:batch_size], dtype=torch.long, device=device)
-        question_in = torch.tensor(question[0:batch_size], dtype=torch.long, device=device)
-        len_c = 100
-        len_q = 20
-        len_a = 20
-        
-        weight = np.load("weight.npy")
-
-        weight = torch.FloatTensor(weight)
-
-        encoder_context = EncoderRNN_Document(64, weight).to(device)
-        h_c = None
-        annotation_vector = torch.zeros(batch_size, len_c, 2*64, device=device)
-        for t_c in range(len_c):
-            input = context_in[:, t_c]
-            o, h_c = encoder_context.forward(input, h_c)
-            annotation_vector[:, t_c, :] = o[:, 0, :]
-            
-        encoder_answer = EncoderRNN_Answer(64, weight).to(device)
-        h_a = None
-        answer_encoding = None
-        annotation_seq = torch.zeros(batch_size, len_a, 2*64, device=device)
-        for j in range(batch_size):
-            actual_len =  answer_pointer[j][1] - answer_pointer[j][0] + 1
-            annotation_seq[j, 0:actual_len, :] = annotation_vector[j, answer_pointer[j][0]:answer_pointer[j][1]+1,:]
-        for t_a in range(len_a):
-            input = answer_in[:, t_a]
-        
-            answer_encoding, h_a = encoder_answer.forward(input, annotation_seq[:, t_a, :], h_a)
-            
-        weight_shortlist = np.load("weight_shortlist.npy")
-        weight_shortlist = torch.FloatTensor(weight_shortlist)
-        s = answer_encoding.view(1, -1, 128)
-        decoder = AttnDecoderRNN(128, weight_shortlist.size(0), weight_shortlist, 0.1, len_q, len_c).to(device)
-        for t_q in range(1):
-            input = question_in[:, t_q]
-            
-            o, s, p_t = decoder.forward(input,s,annotation_vector, answer_encoding)
-    
-    
+    if args.testing:    
         
         exit(0)
     
