@@ -123,7 +123,7 @@ class AttnDecoderRNN(nn.Module):
 
 teacher_forcing_ratio = 0.5
 
-def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d, encoder_a, decoder, encoder_d_optimizer, encoder_a_optimizer, decoder_optimizer,len_d, len_a, len_q): #return loss
+def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d, encoder_a, decoder, encoder_d_optimizer, encoder_a_optimizer, decoder_optimizer, len_d, len_a, len_q): #return loss
     
     batch_size = 1
     
@@ -131,7 +131,7 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
     encoder_a_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
     
-    annotation_vector = torch.zeros(1, len_d, 2*64, device=device)
+    annotation_vector = torch.zeros(1, len_d, 2*encoder_d.hidden_size, device=device)
     len_d_actual = input_d.size(1)
     h_d = None
     for t_d in range(len_d_actual):
@@ -142,7 +142,7 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
     h_a = None
     answer_encoding = None
     len_a = input_a.size(1)
-    annotation_seq = torch.zeros(1, len_a, 2*64, device=device) 
+    annotation_seq = torch.zeros(1, len_a, 2*encoder_a.hidden_size, device=device) 
     for j in range(batch_size):
         actual_len =  answer_pointer[j][1] - answer_pointer[j][0] + 1
         annotation_seq[j, 0:actual_len, :] = annotation_vector[j, answer_pointer[j][0]:answer_pointer[j][1]+1,:]
@@ -150,7 +150,7 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
         input = input_a[:, t_a].view(1, 1)
         answer_encoding, h_a = encoder_a.forward(input, annotation_seq[:, t_a, :], h_a)
         
-    #s = answer_encoding.view(1, -1, 128)
+    #s = answer_encoding.view(1, -1, hidden_size)
     s = decoder.inintHidden(answer_encoding, annotation_vector)
     SOS = [1]
     decoder_input = torch.tensor(SOS, dtype=torch.long, device=device).view(1, 1) # SOS token  
@@ -199,6 +199,8 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
 def main():
     if args.training:
         
+        HIDDEN_SIZE = 256
+        
         document, question, answer, answer_pointer = data_reduction() #100, 20, 20
         
         d = dynamic_id_sentence(document)
@@ -211,9 +213,9 @@ def main():
         weight_shortlist = np.load("weight_shortlist.npy")
         weight_shortlist = torch.FloatTensor(weight_shortlist)
         
-        encoder_d = EncoderRNN_Document(64, weight).to(device)
-        encoder_a = EncoderRNN_Answer(64, weight).to(device)
-        decoder = AttnDecoderRNN(128, weight_shortlist.size(0), weight_shortlist, 0.1, 20, 100).to(device)
+        encoder_d = EncoderRNN_Document(int(HIDDEN_SIZE/2), weight).to(device)
+        encoder_a = EncoderRNN_Answer(int(HIDDEN_SIZE/2), weight).to(device)
+        decoder = AttnDecoderRNN(HIDDEN_SIZE, weight_shortlist.size(0), weight_shortlist, 0.1, 20, 100).to(device)
         
         encoder_d_optimizer = optim.Adam(encoder_d.parameters(), lr=0.0001)
         encoder_a_optimizer = optim.Adam(encoder_a.parameters(), lr=0.0001)        
@@ -221,8 +223,11 @@ def main():
         
         epoch = 0
         loss_total = 0
-        for iter in range(100000):
-            i = iter%100
+        num = 10000
+        print("total: ",num, " data")
+        for iter in range(1000000):
+            i = iter%num
+            j = i%100
             d_in = torch.tensor(d[i], dtype=torch.long, device=device).view(1, -1) # batch, len_d
             a_in = torch.tensor(a[i], dtype=torch.long, device=device).view(1, -1)
             q_in = torch.tensor(q[i], dtype=torch.long, device=device).view(1, -1)
@@ -231,16 +236,14 @@ def main():
 
             loss_total += train(d_in, document[i], a_in, a_p, q_in, question[i], encoder_d, encoder_a, decoder,
                          encoder_d_optimizer, encoder_a_optimizer, decoder_optimizer, 100, 20, 20)
-            if i == 99:
-                epoch+=1
+            
+            if j == 99:
                 print("epoch =", epoch, " ,loss=", loss_total / 100)
                 loss_total = 0
+            if i == num -1:
+                epoch+=1
         
         
-        #print(d_in.size())
-        
-        
-        #loss = train()
 
     if args.testing:    
         
