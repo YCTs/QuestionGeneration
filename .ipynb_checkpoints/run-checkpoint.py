@@ -26,7 +26,7 @@ class EncoderRNN_Context(nn.Module):
         super(EncoderRNN_Context, self).__init__()
         self.hidden_size = hidden_size
 
-        self.embedding = nn.Embedding.from_pretrained(embedding_weight)
+        self.embedding = nn.Embedding.from_pretrained(embedding_weight, freeze=True)
         self.embedding_dim = embedding_weight.size(1)
         
         self.bi_gru = nn.GRU(self.embedding_dim, hidden_size, batch_first=True, bidirectional=True)
@@ -44,7 +44,7 @@ class EncoderRNN_Answer(nn.Module):
         super(EncoderRNN_Answer, self).__init__()
         self.hidden_size = hidden_size
 
-        self.embedding = nn.Embedding.from_pretrained(embedding_weight)
+        self.embedding = nn.Embedding.from_pretrained(embedding_weight, freeze=True)
         self.embedding_dim = embedding_weight.size(1)
 
         self.bi_gru = nn.GRU(self.embedding_dim + 2*self.hidden_size, hidden_size, batch_first=True, bidirectional=True)
@@ -67,12 +67,15 @@ class AttnDecoderRNN(nn.Module):
         self.dropout_p = dropout_p
         self.max_length = len_q
         self.embedding_dim = embedding_weight.size(1)
-        self.embedding = nn.Embedding.from_pretrained(embedding_weight)
+        self.embedding = nn.Embedding.from_pretrained(embedding_weight, freeze=True)
         self.attn = nn.Linear(self.hidden_size*(len_c + 2) + self.embedding_dim, len_c)
         self.attn_combine = nn.Linear(self.hidden_size +self.embedding_dim, self.hidden_size)
         self.dropout = nn.Dropout(self.dropout_p)
         self.gru = nn.GRU(self.hidden_size*2 +self.embedding_dim, self.hidden_size, batch_first=True)
+        self.mlp = nn.Linear(3*self.hidden_size + self.embedding_dim, self.hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
+        self.pointer_weight = nn.Parameter(torch.zeros((1), requires_grad=True))
+        
 
     def forward(self, input, hidden, annot_vector, answer_encoding):
         embedded = self.embedding(input).view(-1, 1, self.embedding_dim) # -1, 1, embed_dim
@@ -98,9 +101,15 @@ class AttnDecoderRNN(nn.Module):
         
         output, hidden = self.gru(gru_input, hidden)
         
+        input_mlp = torch.cat((output, v_t, embedded), 2).squeeze(1)
 
-        
-        return output, hidden
+        e_t = self.mlp(input_mlp)
+        o_t = F.softmax(self.out(e_t), dim=1) # -1, output_size
+        z_t = torch.sigmoid(self.pointer_weight)
+        p_t = torch.cat((o_t*z_t, attn_weights*(1-z_t)), 1)
+        print(p_t.size())
+        #print(z_t)
+        return output, hidden, p_t
         '''
 
 
@@ -137,7 +146,7 @@ def main():
         context, question, answer, answer_pointer = data_reduction() #100, 20, 20
         
         context = id_sentence(context, 100)
-        question = id_sentence(question, 20)
+        question = id_sentence(question, 20, True)
         answer = id_sentence(answer, 20)
         batch_size = 10
         context_in = torch.tensor(context[0:batch_size], dtype=torch.long, device=device)
@@ -172,12 +181,14 @@ def main():
             answer_encoding, h_a = encoder_answer.forward(input, annotation_seq[:, t_a, :], h_a)
             #print(answer_encoding.size())
             
+        weight_shortlist = np.load("weight_shortlist.npy")
+        weight_shortlist = torch.FloatTensor(weight_shortlist)
         s = answer_encoding.view(1, -1, 128)
-        decoder = AttnDecoderRNN(128, weight.size(0), weight, 0.1, len_q, len_c).cuda()
+        decoder = AttnDecoderRNN(128, weight_shortlist.size(0), weight_shortlist, 0.1, len_q, len_c).cuda()
         for t_q in range(1):
             input = question_in[:, t_q]
             
-            o, s = decoder.forward(input,s,annotation_vector, answer_encoding)
+            o, s, p_t = decoder.forward(input,s,annotation_vector, answer_encoding)
     
     
         
@@ -188,37 +199,7 @@ def main():
         #embedding_weight()
         shortlist()
         exit(0)
-    weight = np.load("weight.npy")
 
-    weight = torch.FloatTensor(weight)
-
-
-    encoder = EncoderRNN(50, weight).cuda()
-
-    x = torch.tensor([[1, 2], [1, 2], [1, 2]], dtype=torch.long, device=device)
-    
-    seq_len = x.size(1)
-    batch_size=3
-    hidden = None
-    encoder_outputs=torch.zeros(batch_size, seq_len, 2*encoder.hidden_size, device=device)
-
-    for time in range(seq_len):
-        x_in = x[:, time]
-        o, hidden = encoder.forward(x_in, hidden) # bidirectional o(-1, 1, 2*h_dim) h(2, -1, h_dim)
-        print(o.size(), hidden.size())
-        encoder_outputs[:, time, :] = o[:,0,:]
-
-    '''
-
-    max_length = seq_len
-    decoder_dict_size = 5
-    decoder = AttnDecoderRNN(50, decoder_dict_size, weight, 0.1, max_length).cuda()
-    hidden_decoder = hidden
-    for time in range(max_length):
-        x_in = x[: ,time]
-        o_decoder, h_decoder = decoder.forward(x_in, hidden_decoder, encoder_outputs)
-
-    '''
 
 if __name__ == '__main__':
     main()

@@ -121,21 +121,36 @@ def data_reduction():
         
     return context_new, question_new, answer_new, answer_pointer_new
 
-def id_sentence(sentences, max_len):
-
-    ids = []
-
-    word2id = np.load("word2id.npy").item()
-    
-    for i, sentence in enumerate(sentences):
-        ids.append(np.zeros(max_len))
-        for j, word in enumerate(sentence):
-            if word in word2id:
-                ids[i][j] = word2id[word]
-            else:
-                ids[i][j] = word2id["UNK"]
+def id_sentence(sentences, max_len, shortlist=False):
+    ids= []
+    if True and shortlist:
         
-    ids = np.array(ids).reshape(-1, max_len).astype(np.int32)
+
+        word2id = np.load("word2id.npy").item()
+
+        for i, sentence in enumerate(sentences):
+            ids.append(np.zeros(max_len))
+            for j, word in enumerate(sentence):
+                if word in word2id:
+                    ids[i][j] = word2id[word]
+                else:
+                    ids[i][j] = word2id["UNK"]
+
+        ids = np.array(ids).reshape(-1, max_len).astype(np.int32)
+    else:
+        
+
+        word2id = np.load("word2id_shortlist.npy").item()
+
+        for i, sentence in enumerate(sentences):
+            ids.append(np.zeros(max_len))
+            for j, word in enumerate(sentence):
+                if word in word2id:
+                    ids[i][j] = word2id[word]
+                else:
+                    ids[i][j] = word2id["UNK"]
+
+        ids = np.array(ids).reshape(-1, max_len).astype(np.int32)
     
     return ids
     
@@ -163,16 +178,28 @@ def shortlist():
     word2id['UNK'] = 3
     id2word=['PAD', 'SOS', 'EOS', 'UNK']
     
-    weight = np.zeros(2004, 100).astype(int32)
+    weight = np.zeros((2004, 100))
+
     
     word2id_encoder = np.load("word2id.npy").item()
     weight_encoder = np.load("weight.npy")
-
+    
+    for i in range(4):
+        weight[i] = weight_encoder[i]
+    print(weight.shape)
+    np.random.seed(0)
     i = 3
     for word, item in x_top2000:
         i+=1
         word2id[word] = i
         id2word.append(word)
         
-        
-        i_encoder = word2id_encoder[word]
+        if word in word2id_encoder:
+            i_encoder = word2id_encoder[word]
+            weight[i] = weight_encoder[i_encoder]
+        else:
+            weight[i] = np.random.randn(100)
+    
+    np.save('word2id_shortlist.npy', word2id)
+    np.save('weight_shortlist.npy', weight)
+    np.save('id2word_shortlist.npy', id2word)
