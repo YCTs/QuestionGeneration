@@ -218,18 +218,23 @@ def main():
         encoder_d_optimizer = optim.Adam(encoder_d.parameters(), lr=0.0001)
         encoder_a_optimizer = optim.Adam(encoder_a.parameters(), lr=0.0001)        
         decoder_optimizer = optim.Adam(decoder.parameters(), lr=0.0001)
-
-        for i in range(1000):
+        
+        epoch = 0
+        loss_total = 0
+        for iter in range(100000):
+            i = iter%100
             d_in = torch.tensor(d[i], dtype=torch.long, device=device).view(1, -1) # batch, len_d
             a_in = torch.tensor(a[i], dtype=torch.long, device=device).view(1, -1)
             q_in = torch.tensor(q[i], dtype=torch.long, device=device).view(1, -1)
             a_p = [answer_pointer[i]]        
 
 
-            loss = train(d_in, document[i], a_in, a_p, q_in, question[i], encoder_d, encoder_a, decoder,
+            loss_total += train(d_in, document[i], a_in, a_p, q_in, question[i], encoder_d, encoder_a, decoder,
                          encoder_d_optimizer, encoder_a_optimizer, decoder_optimizer, 100, 20, 20)
-            if i%10 == 0:
-                print("i =", i, " ,loss=", loss)
+            if i == 99:
+                epoch+=1
+                print("epoch =", epoch, " ,loss=", loss_total / 100)
+                loss_total = 0
         
         
         #print(d_in.size())
