@@ -153,6 +153,22 @@ def id_sentence(sentences, max_len, shortlist=False):
         ids = np.array(ids).reshape(-1, max_len).astype(np.int32)
     
     return ids
+def dynamic_id_sentence(sentences, shortlist=False): # different length
+    ids = []
+    word2id = None
+    if shortlist:
+        word2id = np.load("word2id_shortlist.npy").item()
+    else:
+        word2id = np.load("word2id.npy").item()
+     
+    for i, sentence in enumerate(sentences):
+        ids.append([])
+        for j, word in enumerate(sentence):
+            if word in word2id:
+                ids[i].append(word2id[word])
+            else:
+                ids[i].append(word2id["UNK"])
+    return ids
     
 def shortlist():
     
