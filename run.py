@@ -31,14 +31,14 @@ class EncoderRNN_Document(nn.Module):
         self.hidden_size = hidden_size
 
         self.embedding = nn.Embedding.from_pretrained(embedding_weight, freeze=True)
-        self.embedding_dim = embedding_weight.size(1)
+        self.embedding_dim = embedding_weight.size(1)+1
         
         self.bi_gru = nn.GRU(self.embedding_dim, hidden_size, batch_first=True, bidirectional=True)
 
-    def forward(self, input, hidden):
-        embedded = self.embedding(input).view(-1, 1, self.embedding_dim) # 
-        
-        output = embedded
+    def forward(self, input, hidden, is_in_a):
+        embedded = self.embedding(input).view(-1, 1, self.embedding_dim-1) # 
+        b_feature = torch.tensor([is_in_a], dtype=torch.float, device=device).view(-1, 1, 1)
+        output = torch.cat((embedded, b_feature), 2)
         output, hidden = self.bi_gru(output, hidden) ##hidden(1*num_dir, batch, h_dim), output(batch, 1, 2*h_dim)
 
         return output, hidden
@@ -136,7 +136,10 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
     h_d = None
     for t_d in range(len_d_actual):
         w = input_d[:, t_d].view(1, 1)
-        o, h = encoder_d.forward(w, h_d)
+        is_in_a = 0
+        if t_d == answer_pointer[0][0] or t_d == answer_pointer[0][1]:
+            is_in_a = 1
+        o, h = encoder_d.forward(w, h_d, is_in_a)
         annotation_vector[:, t_d, :] = o[:, 0, :]
     
     h_a = None
@@ -223,7 +226,7 @@ def main():
         
         epoch = 0
         loss_total = 0
-        num = 10000
+        num = 1000
         print("total: ",num, " data")
         for iter in range(1000000):
             i = iter%num
@@ -241,6 +244,9 @@ def main():
                 print("epoch =", epoch, " ,loss=", loss_total / 100)
                 loss_total = 0
             if i == num -1:
+                torch.save(encoder_d.state_dict(), 'ckpt/encoder_d.pkl')
+                torch.save(encoder_a.state_dict(), 'ckpt/encoder_a.pkl')
+                torch.save(decoder.state_dict(), 'ckpt/decoder.pkl')
                 epoch+=1
         
         
