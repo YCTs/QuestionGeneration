@@ -4,5 +4,4 @@ data
 *.npy
 *.zip
 .ipynb_checkpoints
-
 ckpt/*
