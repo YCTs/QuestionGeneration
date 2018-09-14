@@ -168,6 +168,7 @@ def dynamic_id_sentence(sentences, shortlist=False): # different length
                 ids[i].append(word2id[word])
             else:
                 ids[i].append(word2id["UNK"])
+        ids[i].append(int(2))       
     return ids
     
 def shortlist():

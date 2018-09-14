@@ -1,4 +1,5 @@
 import numpy as np
+import random
 import torch
 import torch.nn as nn
 from torch import optim
@@ -158,11 +159,16 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
     SOS = [1]
     decoder_input = torch.tensor(SOS, dtype=torch.long, device=device).view(1, 1) # SOS token  
     loss = 0
-    using_teacher_forcing = True
     
-    if using_teacher_forcing:
+    
+    using_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
+    
+    len_q = target.size(1)
+    predict_id = torch.zeros(len_q, device=device)
+    
+    if using_teacher_forcing :
 
-        len_q = target.size(1)
+        #len_q = target.size(1)
 
         for t_q in range(len_q):
 
@@ -176,18 +182,38 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
                     if word == d_words[j]:
                         y_t = torch.tensor([j+2004], device=device)
                         break
-            
+            #print(p_t.size())
+            predict_id[t_q] = torch.argmax(p_t, dim=1)
             loss+=nn.NLLLoss()(p_t, y_t)
-            
+                    
             
     else:
-        len_q = target.size(1)
         
         for t_q in range(len_q):
 
             o, s, p_t = decoder.forward(decoder_input,s,annotation_vector, answer_encoding)
-
-            decoder_input = target[:, t_q].view(1, 1)
+            topi = torch.argmax(p_t, dim=1).detach()
+            x_feed = topi.item()
+            if x_feed >=2004:
+                x_feed = 3
+            
+            decoder_input = torch.tensor(x_feed, dtype=torch.long, device=device).view(1, 1)
+            y_t = target[:, t_q].view(1,)
+            if y_t.item() == 3:
+                
+                word = q_words[t_q]
+                for j in range(len(d_words)):
+                    if word == d_words[j]:
+                        y_t = torch.tensor([j+2004], device=device)
+                        break
+            predict_id[t_q] = torch.argmax(p_t, dim=1)
+            loss+=nn.NLLLoss()(p_t, y_t)
+            
+            if decoder_input.item() == 2: #EOS
+                break
+            
+    
+    
     
     loss.backward()
     encoder_d_optimizer.step()
@@ -196,7 +222,7 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
 
             
             
-    return loss.item()/len_q
+    return loss.item()/len_q, predict_id
 
 
 def main():
@@ -216,9 +242,17 @@ def main():
         weight_shortlist = np.load("weight_shortlist.npy")
         weight_shortlist = torch.FloatTensor(weight_shortlist)
         
+        id2word_shortlist = np.load("id2word_shortlist.npy")
+        
         encoder_d = EncoderRNN_Document(int(HIDDEN_SIZE/2), weight).to(device)
         encoder_a = EncoderRNN_Answer(int(HIDDEN_SIZE/2), weight).to(device)
         decoder = AttnDecoderRNN(HIDDEN_SIZE, weight_shortlist.size(0), weight_shortlist, 0.1, 20, 100).to(device)
+        
+        
+        encoder_d.load_state_dict(torch.load("ckpt/encoder_d.pkl"))
+        encoder_a.load_state_dict(torch.load("ckpt/encoder_a.pkl"))
+        decoder.load_state_dict(torch.load("ckpt/decoder.pkl"))
+        
         
         encoder_d_optimizer = optim.Adam(encoder_d.parameters(), lr=0.0001)
         encoder_a_optimizer = optim.Adam(encoder_a.parameters(), lr=0.0001)        
@@ -226,27 +260,46 @@ def main():
         
         epoch = 0
         loss_total = 0
-        num = 1000
-        print("total: ",num, " data")
+        num = 10000
+        print("total: ",num, " data, print every 1000 data")
+        predict_word = []
         for iter in range(1000000):
             i = iter%num
-            j = i%100
+            j = i%1000
             d_in = torch.tensor(d[i], dtype=torch.long, device=device).view(1, -1) # batch, len_d
             a_in = torch.tensor(a[i], dtype=torch.long, device=device).view(1, -1)
             q_in = torch.tensor(q[i], dtype=torch.long, device=device).view(1, -1)
             a_p = [answer_pointer[i]]        
 
 
-            loss_total += train(d_in, document[i], a_in, a_p, q_in, question[i], encoder_d, encoder_a, decoder,
+            loss_, predict_id_ = train(d_in, document[i], a_in, a_p, q_in, question[i], encoder_d, encoder_a, decoder,
                          encoder_d_optimizer, encoder_a_optimizer, decoder_optimizer, 100, 20, 20)
+            loss_total+=loss_
             
-            if j == 99:
-                print("epoch =", epoch, " ,loss=", loss_total / 100)
+            
+            
+            if j == 999:
+                print("epoch =", epoch, " ,loss=", loss_total / 1000)
                 loss_total = 0
+                
+                for k in range(predict_id_.size(0)):
+                    if predict_id_[k].item() <=2003:
+                        predict_word.append(id2word_shortlist[int(predict_id_[k].item())])
+                    elif int(predict_id_[k].item()-2004) < len(document[i]) :
+                        predict_word.append(document[i][int(predict_id_[k].item()-2004)])
+                    else:
+                        predict_word.append('x')
+                
+                print('target: ', question[i])
+                print('predict: ', predict_word) 
+                predict_word = []
+                
             if i == num -1:
                 torch.save(encoder_d.state_dict(), 'ckpt/encoder_d.pkl')
                 torch.save(encoder_a.state_dict(), 'ckpt/encoder_a.pkl')
                 torch.save(decoder.state_dict(), 'ckpt/decoder.pkl')
+
+                
                 epoch+=1
         
         
