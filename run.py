@@ -132,7 +132,7 @@ class AttnDecoderRNN(nn.Module):
         return self.Wb_0(r.view(-1, 1, self.hidden_size)).view(1, -1, self.hidden_size)
         
 
-teacher_forcing_ratio = 0
+teacher_forcing_ratio = 1
 
 def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d, encoder_a, decoder, encoder_d_optimizer, encoder_a_optimizer, decoder_optimizer, len_d, len_a, len_q): #return loss
     
