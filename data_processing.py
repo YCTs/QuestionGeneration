@@ -123,7 +123,7 @@ def data_reduction():
 
 def id_sentence(sentences, max_len, shortlist=False):
     ids= []
-    if True and shortlist:
+    if False == shortlist:
         
 
         word2id = np.load("word2id.npy").item()
@@ -135,7 +135,8 @@ def id_sentence(sentences, max_len, shortlist=False):
                     ids[i][j] = word2id[word]
                 else:
                     ids[i][j] = word2id["UNK"]
-
+            ids[i][len(sentence)] = int(2)
+            
         ids = np.array(ids).reshape(-1, max_len).astype(np.int32)
     else:
         
@@ -149,6 +150,7 @@ def id_sentence(sentences, max_len, shortlist=False):
                     ids[i][j] = word2id[word]
                 else:
                     ids[i][j] = word2id["UNK"]
+            ids[i][len(sentence)] = int(2)
 
         ids = np.array(ids).reshape(-1, max_len).astype(np.int32)
     
