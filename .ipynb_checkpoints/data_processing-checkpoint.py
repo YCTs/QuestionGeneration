@@ -120,7 +120,14 @@ def data_reduction():
         
         
     return context_new, question_new, answer_new, answer_pointer_new
-
+def mask(sentences_ids):
+    mask = np.zeros(sentences_ids.shape)
+    for i in range(len(sentences_ids)):
+        for j in range(len(sentences_ids[0])):
+            if sentences_ids[i][j] != 0:
+                mask[i][j] = 1
+    return mask
+    
 def id_sentence(sentences, max_len, shortlist=False):
     ids= []
     if False == shortlist:

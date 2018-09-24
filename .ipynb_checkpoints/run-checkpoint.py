@@ -36,45 +36,57 @@ class EncoderRNN_Document(nn.Module):
     def __init__(self, hidden_size, embedding_weight):
         super(EncoderRNN_Document, self).__init__()
         self.hidden_size = hidden_size
-
         self.embedding = nn.Embedding.from_pretrained(embedding_weight, freeze=embedding_freeze)
         self.embedding_dim = embedding_weight.size(1)+1
-        self.dropout = nn.Dropout(0.2)
-        self.bi_gru = nn.GRU(self.embedding_dim, hidden_size, batch_first=True, bidirectional=True)
+        self.bn = nn.BatchNorm1d(self.embedding_dim-1)
+        self.dropout = nn.Dropout(0.1)
+        #self.bi_gru = nn.GRU(self.embedding_dim, hidden_size, batch_first=True, bidirectional=True)
+        self.bi_LSTM = nn.LSTM(self.embedding_dim, hidden_size, batch_first=True, bidirectional=True)
 
-    def forward(self, input, hidden, is_in_a, b_feature):
+    def forward(self, input, hidden, c, is_in_a, b_feature):
         embedded = self.embedding(input).view(-1, 1, self.embedding_dim-1) #
-        embedded = self.dropout(embedded)
+        #embedded = self.bn(embedded.view(-1, self.embedding_dim-1)).view(-1, 1, self.embedding_dim-1)
+        #embedded = self.dropout(embedded)
         #b_feature = torch.tensor(is_in_a, dtype=torch.float, device=device).view(-1, 1, 1)
         #print(b_feature.size())
         #b_feature = nn.D
         output = torch.cat((embedded, b_feature), 2)
-        output, hidden = self.bi_gru(output, hidden) ##hidden(1*num_dir, batch, h_dim), output(batch, 1, 2*h_dim)
+        #output, hidden = self.bi_gru(output, hidden) ##hidden(1*num_dir, batch, h_dim), output(batch, 1, 2*h_dim)
+        if hidden is not None:
+            output, (hidden, c) = self.bi_LSTM(output, (hidden, c))
+        else:
+            output, (hidden, c) = self.bi_LSTM(output)
+
         output = self.dropout(output)
         hidden = self.dropout(hidden)
 
-        return output, hidden
+        return output, (hidden, c)
 
 class EncoderRNN_Answer(nn.Module):
     def __init__(self, hidden_size, embedding_weight):
         super(EncoderRNN_Answer, self).__init__()
         self.hidden_size = hidden_size
-        self.dropout = nn.Dropout(0.2)
+        self.dropout = nn.Dropout(0.1)
         self.embedding = nn.Embedding.from_pretrained(embedding_weight, freeze=embedding_freeze)
         self.embedding_dim = embedding_weight.size(1)
 
-        self.bi_gru = nn.GRU(self.embedding_dim + 2*self.hidden_size, hidden_size, batch_first=True, bidirectional=True)
+        #self.bi_gru = nn.GRU(self.embedding_dim + 2*self.hidden_size, hidden_size, batch_first=True, bidirectional=True)
+        self.bi_LSTM = nn.LSTM(self.embedding_dim + 2*self.hidden_size, hidden_size, batch_first=True, bidirectional=True)
 
-    def forward(self, input, annotation_seq, hidden):
+    def forward(self, input, annotation_seq, hidden, c):
         # annotaion_seq = (-1, 1, 2*hidden_size)
         embedded = self.embedding(input).view(-1, 1, self.embedding_dim) # 
-        embedded = self.dropout(embedded)
-        output = torch.cat((embedded, annotation_seq.unsqueeze(1)), 2)            
-        output, hidden = self.bi_gru(output, hidden) ##hidden(1*num_dir, batch, h_dim), output(batch, 1, 2*h_dim)
+        #embedded = self.dropout(embedded)
+        output = torch.cat((embedded, annotation_seq.unsqueeze(1)), 2)
+        if hidden is not None:
+            output, (hidden, c) = self.bi_LSTM(output, (hidden, c)) ##hidden(1*num_dir, batch, h_dim), output(batch, 1, 2*h_dim)
+        else:
+            output, (hidden, c) = self.bi_LSTM(output)
+            
         output = self.dropout(output)
         hidden = self.dropout(hidden)
 
-        return output, hidden
+        return output, (hidden, c)
         
 class AttnDecoderRNN(nn.Module):
     def __init__(self, hidden_size, output_size, embedding_weight, embedding_weight_d, dropout_p=0.3, len_q=20, len_c=100):
@@ -89,7 +101,8 @@ class AttnDecoderRNN(nn.Module):
         self.attn = nn.Linear(self.hidden_size*(len_c + 2) + self.embedding_dim, len_c)
         self.attn_combine = nn.Linear(self.hidden_size +self.embedding_dim, self.hidden_size)
         self.dropout = nn.Dropout(self.dropout_p)
-        self.gru = nn.GRU(self.hidden_size*2 +self.embedding_dim, self.hidden_size, batch_first=True)
+        #self.gru = nn.GRU(self.hidden_size*2 +self.embedding_dim, self.hidden_size, batch_first=True)
+        self.LSTM = nn.LSTM(self.hidden_size*2 +self.embedding_dim, self.hidden_size, batch_first=True)
         self.mlp = nn.Linear(3*self.hidden_size + self.embedding_dim, self.hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
         #self.pointer_weight = nn.Parameter(torch.zeros((1), requires_grad=True))
@@ -105,7 +118,7 @@ class AttnDecoderRNN(nn.Module):
         self.L = nn.Parameter(torch.zeros((self.hidden_size, self.hidden_size), requires_grad=True))
         self.Wb_0 = nn.Linear(self.hidden_size, self.hidden_size)
 
-    def forward(self, input, hidden, annot_vector, answer_encoding, input_d):
+    def forward(self, input, hidden, c, annot_vector, answer_encoding, input_d):
         batch_size = input.size(0)
         hidden = hidden.view(1, batch_size, -1)
         embedded = torch.zeros(batch_size, 1, self.embedding_dim, device=device)
@@ -118,7 +131,7 @@ class AttnDecoderRNN(nn.Module):
             else:
                 embedded[i] = self.embedding(input[i]).view(-1, 1, self.embedding_dim) # -1, 1, embed_dim
         
-        embedded = self.dropout(embedded)
+        #embedded = self.dropout(embedded)
         hidden = self.dropout(hidden)
                 
         #print(embedded.size())         #-1, 1, embed_dim
@@ -139,7 +152,10 @@ class AttnDecoderRNN(nn.Module):
         gru_input = torch.cat((v_t, embedded), 2)
         gru_input = self.dropout(gru_input)
         
-        output, hidden = self.gru(gru_input, hidden)
+        if c is not None:
+            output, (hidden, c) = self.LSTM(gru_input, (hidden, c))
+        else:
+            output, (hidden, c) = self.LSTM(gru_input)
 
         input_mlp = torch.cat((output, v_t, embedded), 2).squeeze(1)
         #input_mlp = self.dropout(input_mlp)
@@ -151,7 +167,7 @@ class AttnDecoderRNN(nn.Module):
 
         p_t = torch.cat((o_t*(1 - z_t), attn_weights*(z_t)), 1)
         p_t = torch.log(p_t+1e-20)
-        return output, hidden, p_t
+        return output, hidden, c, p_t
     def inintHidden(self, h_a, h_d):
         #print(h_a.size())
         r = torch.matmul(h_a, self.L) + torch.sum(h_d.view(-1, h_d.size(1), h_d.size(2)), dim=(1, 2), keepdim=True)/h_d.size(1)
@@ -168,10 +184,13 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
     encoder_d_optimizer.zero_grad()
     encoder_a_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
-    annotation_vector = torch.zeros(batch_size, len_d, 2*encoder_d.hidden_size, device=device)
+    annotation_vector = None
     if multi_gpu:
         annotation_vector = torch.zeros(batch_size, len_d, 2*encoder_d.module.hidden_size, device=device)
+    else:
+        annotation_vector = torch.zeros(batch_size, len_d, 2*encoder_d.hidden_size, device=device)
     h_d = None
+    c_d = None
     for t_d in range(len_d):
         w = input_d[:, t_d].view(-1, 1)
         is_in_a = []
@@ -181,29 +200,35 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
             else:
                 is_in_a.append(0)
         b_feature = torch.tensor(is_in_a, dtype=torch.float, device=device).view(-1, 1, 1)
-        o, h_d = encoder_d.forward(w, h_d, is_in_a, b_feature)
+        o, (h_d, c_d) = encoder_d.forward(w, h_d, c_d, is_in_a, b_feature)
         
         annotation_vector[:, t_d, :] = o[:, 0, :]
     
     h_a = None
+    c_a = None
     answer_encoding = None
-    annotation_seq = torch.zeros(batch_size, len_a, 2*encoder_a.hidden_size, device=device) 
+    annotation_seq = None 
     if multi_gpu:
         annotation_seq = torch.zeros(batch_size, len_a, 2*encoder_a.module.hidden_size, device=device) 
+    else:
+        annotation_seq = torch.zeros(batch_size, len_a, 2*encoder_a.hidden_size, device=device)
     for j in range(batch_size):
         actual_len =  answer_pointer[j][1] - answer_pointer[j][0] + 1
         annotation_seq[j, 0:actual_len, :] = annotation_vector[j, answer_pointer[j][0]:answer_pointer[j][1]+1,:]
     
     for t_a in range(len_a):
         input = input_a[:, t_a].view(-1, 1)
-        answer_encoding, h = encoder_a.forward(input, annotation_seq[:, t_a, :], h_a)
+        answer_encoding, (h_a, c_a) = encoder_a.forward(input, annotation_seq[:, t_a, :], h_a, c_a)
         #h_a = h.view(batch_size, 2, -1)
         
        
     #s = answer_encoding.view(1, batch_size, -1)
-    s = decoder.inintHidden(answer_encoding, annotation_vector).view(batch_size, 1, -1)
+    s =None
+    c_q = None
     if multi_gpu:
         s = decoder.module.inintHidden(answer_encoding, annotation_vector).view(batch_size, 1, -1)
+    else:
+        s = decoder.inintHidden(answer_encoding, annotation_vector).view(batch_size, 1, -1)
     SOS = np.ones(batch_size).astype(np.int32)
     decoder_input = torch.tensor(SOS, dtype=torch.long, device=device).view(-1, 1, 1) # SOS token  
     loss = 0
@@ -220,7 +245,7 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
 
         for t_q in range(len_q):
             
-            o, s, p_t = decoder.forward(decoder_input, s, annotation_vector, answer_encoding, input_d)
+            o, s, c_q, p_t = decoder.forward(decoder_input, s, c_q, annotation_vector, answer_encoding, input_d)
             
 
     
@@ -236,10 +261,10 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
                             #decoder_input[i] = torch.tensor([j+2004], device=device).view(1, 1)
                             break
             '''
-
+            #print(p_t.size())
             y_t = decoder_input.view(batch_size,)
-            #predict_id[t_q] = torch.argmax(p_t, dim=1)
-            loss+=nn.NLLLoss()(p_t, y_t)
+            predict_id[:, t_q] = torch.argmax(p_t, dim=1)
+            loss+=nn.NLLLoss(ignore_index=0)(p_t, y_t)
 
     
     else:
@@ -274,16 +299,18 @@ def train(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d,
     encoder_a_optimizer.step()
     decoder_optimizer.step()
     
-         
-    predict_id = 0        
     return loss.item(), predict_id
 
 def evaluate(input_d, d_words, input_a, answer_pointer, target, q_words, encoder_d, encoder_a, decoder, len_d, len_a, len_q):
     batch_size = input_d.size(0)
-    annotation_vector = torch.zeros(batch_size, len_d, 2*encoder_d.hidden_size, device=device)
+
+    annotation_vector = None
     if multi_gpu:
         annotation_vector = torch.zeros(batch_size, len_d, 2*encoder_d.module.hidden_size, device=device)
+    else:
+        annotation_vector = torch.zeros(batch_size, len_d, 2*encoder_d.hidden_size, device=device)
     h_d = None
+    c_d = None
     for t_d in range(len_d):
         w = input_d[:, t_d].view(-1, 1)
         is_in_a = []
@@ -293,28 +320,35 @@ def evaluate(input_d, d_words, input_a, answer_pointer, target, q_words, encoder
             else:
                 is_in_a.append(0)
         b_feature = torch.tensor(is_in_a, dtype=torch.float, device=device).view(-1, 1, 1)
-        o, h_d = encoder_d.forward(w, h_d, is_in_a, b_feature)
+        o, (h_d, c_d) = encoder_d.forward(w, h_d, c_d, is_in_a, b_feature)
+        
         annotation_vector[:, t_d, :] = o[:, 0, :]
     
     h_a = None
+    c_a = None
     answer_encoding = None
-    annotation_seq = torch.zeros(batch_size, len_a, 2*encoder_a.hidden_size, device=device) 
+    annotation_seq = None 
     if multi_gpu:
         annotation_seq = torch.zeros(batch_size, len_a, 2*encoder_a.module.hidden_size, device=device) 
-        
+    else:
+        annotation_seq = torch.zeros(batch_size, len_a, 2*encoder_a.hidden_size, device=device)
     for j in range(batch_size):
         actual_len =  answer_pointer[j][1] - answer_pointer[j][0] + 1
         annotation_seq[j, 0:actual_len, :] = annotation_vector[j, answer_pointer[j][0]:answer_pointer[j][1]+1,:]
     
     for t_a in range(len_a):
         input = input_a[:, t_a].view(-1, 1)
-        answer_encoding, h_a = encoder_a.forward(input, annotation_seq[:, t_a, :], h_a)
+        answer_encoding, (h_a, c_a) = encoder_a.forward(input, annotation_seq[:, t_a, :], h_a, c_a)
+        #h_a = h.view(batch_size, 2, -1)
         
        
-    #s = answer_encoding.view(1, -1, hidden_size)
-    s = decoder.inintHidden(answer_encoding, annotation_vector).view(batch_size, 1, -1)
+    #s = answer_encoding.view(1, batch_size, -1)
+    s =None
+    c_q = None
     if multi_gpu:
         s = decoder.module.inintHidden(answer_encoding, annotation_vector).view(batch_size, 1, -1)
+    else:
+        s = decoder.inintHidden(answer_encoding, annotation_vector).view(batch_size, 1, -1)
     SOS = np.ones(batch_size).astype(np.int32)
     decoder_input = torch.tensor(SOS, dtype=torch.long, device=device).view(-1, 1, 1) # SOS token  
     loss = 0
@@ -330,21 +364,32 @@ def evaluate(input_d, d_words, input_a, answer_pointer, target, q_words, encoder
         #len_q = target.size(1)
 
         for t_q in range(len_q):
-
-            o, s, p_t = decoder.forward(decoder_input, s, annotation_vector, answer_encoding, input_d)
+            
+            o, s, c_q, p_t = decoder.forward(decoder_input, s, c_q, annotation_vector, answer_encoding, input_d)
             
 
     
             decoder_input = target[:, t_q].view(-1, 1, 1)
-
+            '''
+            print(decoder_input.requires_grad)
+            for i in range(batch_size):
+                if target[i][t_q].item()== 3:
+                    word = q_words[i][t_q]
+                    for j in range(len(d_words[i])):
+                        if word == d_words[i][j] and input_d[i][j].item() != 3:
+                            print("copy")
+                            #decoder_input[i] = torch.tensor([j+2004], device=device).view(1, 1)
+                            break
+            '''
+            #print(p_t.size())
             y_t = decoder_input.view(batch_size,)
-            #predict_id[t_q] = torch.argmax(p_t, dim=1)
-            loss+=nn.NLLLoss()(p_t, y_t)           
+            predict_id[:, t_q] = torch.argmax(p_t, dim=1)
+            loss+=nn.NLLLoss(ignore_index=0)(p_t, y_t)        
             
     return loss.item(), predict_id   
 
 def main():
-    HIDDEN_SIZE = 512
+    HIDDEN_SIZE = 700
 
     document, question, answer, answer_pointer = data_reduction() #100, 20, 20
     d = id_sentence(document, 101)
@@ -394,15 +439,16 @@ def main():
         
         epoch = 0
         loss_total = 0
-        num_batch = 48
+        num_batch = 192
+        val_predict_word = []
         predict_word = []
-        batch_size = 512
+        batch_size = 128
         num = num_batch*batch_size
         print("total: ",num, " data, print every epoch")
         loss_min = 99999
         for iter in range(100000):
             i = iter%num_batch
-            j = i%1000
+
             d_in = torch.tensor(d[i*batch_size:(i+1)*batch_size], dtype=torch.long, device=device).view(batch_size, -1) # batch, len_d
             a_in = torch.tensor(a[i*batch_size:(i+1)*batch_size], dtype=torch.long, device=device).view(batch_size, -1)
             q_in = torch.tensor(q[i*batch_size:(i+1)*batch_size], dtype=torch.long, device=device).view(batch_size, -1)
@@ -412,7 +458,7 @@ def main():
                          encoder_d_optimizer, encoder_a_optimizer, decoder_optimizer, 101, 21, 21)
             loss_total+=loss_
             if i == num_batch-1:
-                val_size=1000
+                val_size=500
                 val_d_in = torch.tensor(d[num:num+val_size], dtype=torch.long, device=device).view(val_size, -1) # batch, len_d
                 val_a_in = torch.tensor(a[num:num+val_size], dtype=torch.long, device=device).view(val_size, -1)
                 val_q_in = torch.tensor(q[num:num+val_size], dtype=torch.long, device=device).view(val_size, -1)
@@ -420,7 +466,23 @@ def main():
 
                 val_loss_, val_predict_id_ = evaluate(val_d_in, document[num:num+val_size], val_a_in, val_a_p, val_q_in, question[num:num+val_size], encoder_d, encoder_a, decoder, 101, 21, 21)
                 print(epoch, loss_total/num_batch, val_loss_)
-                #print(decoder.MLP_zt[0:3])
+
+                for j in range(predict_id_.size(1)):
+                    if predict_id_[0][j].item()<2004:
+                        predict_word.append(id2word_shortlist[int(predict_id_[0][j].item())])
+                    elif int(predict_id_[0][j].item()-2004) < len(document[num-batch_size]) :
+                        predict_word.append(document[num-batch_size][int(predict_id_[0][j].item()-2004)])
+                    else:
+                        predict_word.append("x")
+                        
+                for j in range(val_predict_id_.size(1)):
+                    if val_predict_id_[1][j].item()<2004:
+                        val_predict_word.append(id2word_shortlist[int(val_predict_id_[1][j].item())])
+                    elif int(val_predict_id_[1][j].item()-2004) < len(document[num]) :
+                        val_predict_word.append(document[num][int(val_predict_id_[1][j].item()-2004)])
+                    else:
+                        val_predict_word.append("x")
+                
                 loss_total = 0
                 epoch+=1
                 if loss_min > val_loss_:
@@ -430,23 +492,18 @@ def main():
                     torch.save(decoder.state_dict(), 'ckpt/decoder.pkl')               
             
             
-            if j == 999:
-                print("epoch =", epoch, " ,loss =", loss_total / 1000)
-                loss_total = 0
 
-                '''
-                for k in range(predict_id_.size(0)):
-                    if predict_id_[k].item() <=2003:
-                        predict_word.append(id2word_shortlist[int(predict_id_[k].item())])
-                    elif int(predict_id_[k].item()-2004) < len(document[i]) :
-                        predict_word.append(document[i][int(predict_id_[k].item()-2004)])
-                    else:
-                        predict_word.append('x')
-                
-                print('target: ', question[i])
-                print('predict: ', predict_word) 
+                print("=================Result====================:")
+                print("-------------Traning Set--------------")
+                print('ground truth: ', question[num-batch_size])
+                print('predict: ', predict_word)                             
+                print("-------------Validataion--------------")
+                print('ground truth: ', question[num+1])
+                print('predict: ', val_predict_word) 
+                print("===========================================")
                 predict_word = []
-                '''
+                val_predict_word = []
+                
 
         
         
