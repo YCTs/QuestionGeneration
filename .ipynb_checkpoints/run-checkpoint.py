@@ -396,6 +396,11 @@ def main():
     a = id_sentence(answer, 21)
     q = id_sentence(question, 21, shortlist= True)
     
+    val_document, val_question, val_answer, val_answer_pointer = data_reduction(val=True) #100, 20, 20
+    val_d = id_sentence(val_document, 101)
+    val_a = id_sentence(val_answer, 21)
+    val_q = id_sentence(val_question, 21, shortlist= True)
+    
     for i in range(q.shape[0]):
         for j in range(q.shape[1]):
             if q[i][j] == 3:
@@ -403,6 +408,14 @@ def main():
                 for k in range(len(document[i])):
                     if word == document[i][k] and d[i][k] !=3 :
                         q[i][j] = 2004+k
+                        break
+    for i in range(val_q.shape[0]):
+        for j in range(val_q.shape[1]):
+            if val_q[i][j] == 3:
+                word = val_question[i][j]
+                for k in range(len(val_document[i])):
+                    if word == val_document[i][k] and val_d[i][k] !=3 :
+                        val_q[i][j] = 2004+k
                         break
 
     weight = np.load("weight.npy")
@@ -439,14 +452,14 @@ def main():
         
         epoch = 0
         loss_total = 0
-        num_batch = 192
+        num_batch = 624  #192
         val_predict_word = []
         predict_word = []
         batch_size = 128
         num = num_batch*batch_size
         print("total: ",num, " data, print every epoch")
         loss_min = 99999
-        for iter in range(100000):
+        for iter in range(1000000):
             i = iter%num_batch
 
             d_in = torch.tensor(d[i*batch_size:(i+1)*batch_size], dtype=torch.long, device=device).view(batch_size, -1) # batch, len_d
@@ -459,12 +472,12 @@ def main():
             loss_total+=loss_
             if i == num_batch-1:
                 val_size=500
-                val_d_in = torch.tensor(d[num:num+val_size], dtype=torch.long, device=device).view(val_size, -1) # batch, len_d
-                val_a_in = torch.tensor(a[num:num+val_size], dtype=torch.long, device=device).view(val_size, -1)
-                val_q_in = torch.tensor(q[num:num+val_size], dtype=torch.long, device=device).view(val_size, -1)
-                val_a_p = answer_pointer[num:num+val_size]        
+                val_d_in = torch.tensor(val_d[:val_size], dtype=torch.long, device=device).view(val_size, -1) # batch, len_d
+                val_a_in = torch.tensor(val_a[:val_size], dtype=torch.long, device=device).view(val_size, -1)
+                val_q_in = torch.tensor(val_q[:val_size], dtype=torch.long, device=device).view(val_size, -1)
+                val_a_p = val_answer_pointer[:val_size]        
 
-                val_loss_, val_predict_id_ = evaluate(val_d_in, document[num:num+val_size], val_a_in, val_a_p, val_q_in, question[num:num+val_size], encoder_d, encoder_a, decoder, 101, 21, 21)
+                val_loss_, val_predict_id_ = evaluate(val_d_in, val_document[:val_size], val_a_in, val_a_p, val_q_in, val_question[:val_size], encoder_d, encoder_a, decoder, 101, 21, 21)
                 print(epoch, loss_total/num_batch, val_loss_)
 
                 for j in range(predict_id_.size(1)):
@@ -478,8 +491,8 @@ def main():
                 for j in range(val_predict_id_.size(1)):
                     if val_predict_id_[1][j].item()<2004:
                         val_predict_word.append(id2word_shortlist[int(val_predict_id_[1][j].item())])
-                    elif int(val_predict_id_[1][j].item()-2004) < len(document[num]) :
-                        val_predict_word.append(document[num][int(val_predict_id_[1][j].item()-2004)])
+                    elif int(val_predict_id_[1][j].item()-2004) < len(val_document[1]) :
+                        val_predict_word.append(val_document[1][int(val_predict_id_[1][j].item()-2004)])
                     else:
                         val_predict_word.append("x")
                 
@@ -498,7 +511,7 @@ def main():
                 print('ground truth: ', question[num-batch_size])
                 print('predict: ', predict_word)                             
                 print("-------------Validataion--------------")
-                print('ground truth: ', question[num+1])
+                print('ground truth: ', val_question[1])
                 print('predict: ', val_predict_word) 
                 print("===========================================")
                 predict_word = []
@@ -518,37 +531,7 @@ def main():
 
         loss_total = 0
         num = 1000
-        print("total: ",num, " data, print every 100 data")
-        predict_word = []
-        for iter in range(10000, 11000):
-            i = iter
-            j = i%100
-            d_in = torch.tensor(d[i], dtype=torch.long, device=device).view(1, -1) # batch, len_d
-            a_in = torch.tensor(a[i], dtype=torch.long, device=device).view(1, -1)
-            q_in = torch.tensor(q[i], dtype=torch.long, device=device).view(1, -1)
-            a_p = [answer_pointer[i]]        
 
-
-            loss_, predict_id_ = evaluate(d_in, document[i], a_in, a_p, q_in, question[i], encoder_d, encoder_a, decoder,100, 20, 20)
-            loss_total+=loss_
-            
-            
-            
-            if j == 99:
-                print("loss=", loss_total / 100)
-                loss_total = 0
-                
-                for k in range(predict_id_.size(0)):
-                    if predict_id_[k].item() <=2003:
-                        predict_word.append(id2word_shortlist[int(predict_id_[k].item())])
-                    elif int(predict_id_[k].item()-2004) < len(document[i]) :
-                        predict_word.append(document[i][int(predict_id_[k].item()-2004)])
-                    else:
-                        predict_word.append('x')
-                
-                print('target: ', question[i])
-                print('predict: ', predict_word) 
-                predict_word = []
         exit(0)
     
     

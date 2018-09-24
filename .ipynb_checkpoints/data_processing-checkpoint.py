@@ -32,6 +32,37 @@ def train_data():
 
     return context, question, answer, answer_pointer
 
+def val_data():
+			
+    context = open("./data/dev/dev.txt.shuffle.dev.source.txt").readlines()
+    for i in range(len(context)):
+        context[i] = context[i].split()
+
+    question = open('./data/dev/dev.txt.shuffle.dev.target.txt').readlines()
+    for i in range(len(question)):
+        question[i] = question[i].split()
+
+    ans_pos  = open('./data/dev/dev.txt.shuffle.dev.bio').readlines()
+    answer = []
+    answer_pointer = []
+    for i in range(len(ans_pos)):
+        answer.append([])
+        answer_pointer.append([])
+        ans_pos[i] = ans_pos[i].split()
+        ans_s = -1
+        ans_e = -1
+        for j in range(len(ans_pos[i])):
+    
+            if ans_pos[i][j] != 'O' :
+                answer[i].append(context[i][j])
+                ans_e = j
+                if ans_s == -1:
+                    ans_s = j
+                    answer_pointer[i].append(j)
+        answer_pointer[i].append(ans_e)        
+
+    return context, question, answer, answer_pointer
+
 def embedding_weight():
 	f = open('glove.6B.100d.txt').readlines()
 	dim = len(f[0].split()) - 1
@@ -79,8 +110,11 @@ def max_length(x):
             max_len = len(sentence)
     return max_len
 
-def data_reduction():
+def data_reduction(val=False):
+    
     context, question, answer, answer_pointer = train_data()
+    if val:
+        context, question, answer, answer_pointer = val_data()
     count = 0
     index_c = []
     for i in range(len(context)):
